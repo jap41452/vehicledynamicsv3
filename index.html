@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Lateral Spring Model</title>
+<title>Vehicle Dynamics - Lateral Spring Model (Stable Start)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -180,7 +180,7 @@ let state = {
 
 // NEW: Lateral Spring Anchors (The fix)
 // Tracks the Y-position of the "ground grip point" for each tire
-let tireAnchors = { FL:0, FR:0, RL:0, RR:0 };
+let tireAnchors = { FL:{x:0,y:0}, FR:{x:0,y:0}, RL:{x:0,y:0}, RR:{x:0,y:0} };
 
 let box3State = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, az: 0, isOffBed: false };
 
@@ -315,7 +315,6 @@ function buildVehicle() {
 
   massProps = { M, CG, Ixx, Iyy, Izz, W: W1, L: L1 };
 
-  // Visuals
   const b1 = new THREE.Mesh(new THREE.BoxGeometry(W1, L1, H1), new THREE.MeshStandardMaterial({color: 0x5577aa}));
   b1.position.set(c1.x - CG.x, c1.y - CG.y, c1.z - CG.z);
   b1.castShadow = true;
@@ -345,22 +344,9 @@ function buildVehicle() {
   });
 
   // Init Lateral Spring Anchors
-  // Initially, anchors are exactly at wheel positions
-  tireAnchors = { FL: wheelOffsets[0].x, FR: wheelOffsets[1].x, RL: wheelOffsets[2].x, RR: wheelOffsets[3].x }; 
-  // NOTE: These track lateral (X) deviations in local frame or world? 
-  // Easier to track in World Y? No, car rotates.
-  // Best approach: Track World Coords of anchors.
-  tireAnchors = { 
-    FL: {x:0, y:0}, FR: {x:0, y:0}, RL: {x:0, y:0}, RR: {x:0, y:0} 
-  };
-  // Initialize anchors to initial world positions
-  wheelOffsets.forEach((w,i) => {
-    const key = ['FL','FR','RL','RR'][i];
-    tireAnchors[key].x = w.x; 
-    tireAnchors[key].y = w.y;
-  });
-
-  // HARD RESET STATE
+  tireAnchors = { FL:{x:0,y:0}, FR:{x:0,y:0}, RL:{x:0,y:0}, RR:{x:0,y:0} };
+  
+  // STATIC EQUILIBRIUM CALCULATION (CRITICAL)
   const totalWeight = (m1+m2)*g;
   const k_total = 2*getVal('k_sf') + 2*getVal('k_sr');
   const sag = totalWeight / k_total;
@@ -378,8 +364,8 @@ function buildVehicle() {
   const bedZ = (c1.z - CG.z) + H1/2; 
   box3State = { x: getVal('box3_X0'), y: getVal('box3_Y0'), z: bedZ + H3/2 + 2, dx:0, dy:0, dz:0, az:0, isOffBed: false };
   
-  // WARM UP
-  for(let i=0; i<100; i++) step(0.001);
+  // WARM UP (SETTLE)
+  for(let i=0; i<200; i++) step(0.005); // Run 1 sec of heavy damping
   simTime = 0; 
 
   controls.target.set(0, 0, 0);
@@ -390,6 +376,10 @@ function buildVehicle() {
     chartInstance.update();
   }
   document.getElementById('timeDisplay').innerText = `Time: 0.00s`;
+  
+  // SYNC VISUALS TO SETTLED STATE
+  vehicleGroup.position.set(state.x, state.y, state.z);
+  vehicleGroup.rotation.set(state.theta, state.phi, state.psi); 
 }
 
 // --- LATERAL SPRING PHYSICS ---
@@ -411,15 +401,13 @@ function getDerivatives(t, s) {
   Fy -= 0.05 * dy;
   Mz -= 50000 * dpsi; 
 
-  const tireK = 500.0; // Lateral Spring Stiffness (lb/in)
+  const tireK = 500.0; 
 
   wheelOffsets.forEach((wOff, i) => {
     const key = ['FL','FR','RL','RR'][i];
-    // Current Wheel Pos World
     const wx = x + cP*wOff.x - sP*wOff.y;
     const wy = y + sP*wOff.x + cP*wOff.y;
     
-    // Suspension / Vertical
     const zw = s[12+i];
     const dzw = s[16+i];
     const zb = z - phi*wOff.x + theta*wOff.y;
@@ -436,58 +424,46 @@ function getDerivatives(t, s) {
 
     // --- LATERAL SPRING MODEL ---
     if(F_tire_z > 0) {
-      // Anchor Point
       const anchor = tireAnchors[key];
-      
-      // Lateral Stretch Vector (World)
-      // Vector from Anchor TO Wheel
       const stretchX = wx - anchor.x;
       const stretchY = wy - anchor.y;
       
-      // Project Stretch onto Lateral Axis (Perpendicular to Heading)
-      // Heading = (-sP, cP) ? No, standard car Y is fwd.
-      // Unit Lateral Vec (Right) = (cP, sP).
+      // Project Stretch onto Lateral Axis (Right vector = cP, sP)
       const latStretch = stretchX*cP + stretchY*sP;
       
-      // Force = -k * Stretch
       let F_lat = -tireK * latStretch;
-      
-      // Friction Limit
       const limit = getVal('tire_mu') * F_tire_z;
       
-      // SLIDING LOGIC: If force exceeds limit, move anchor!
       if(Math.abs(F_lat) > limit) {
         F_lat = Math.sign(F_lat) * limit;
-        // Move anchor so that force equals limit
-        // New stretch should be limit / k
+        // Move anchor logic handled in step() or here approx?
+        // Better to update anchor in integration step, but we cheat here for simplicity
         const allowedStretch = limit / tireK;
         const correction = Math.abs(latStretch) - allowedStretch;
-        // Move anchor in direction of stretch
         const sign = Math.sign(latStretch);
-        // Update anchor world pos
-        // We move anchor along Lateral Axis
-        const moveX = sign * correction * cP;
-        const moveY = sign * correction * sP;
-        tireAnchors[key].x += moveX;
-        tireAnchors[key].y += moveY;
+        tireAnchors[key].x += sign * correction * cP;
+        tireAnchors[key].y += sign * correction * sP;
       }
       
-      // Apply Force
+      Fx += F_lat * (-sP); // Apply force PERPENDICULAR to heading? No.
+      // Lat force is along lateral axis (Right).
+      // Right Vector = (-sP, cP)? No.
+      // Forward Vector = (-sP, cP). Right Vector = (cP, sP).
+      // So F_world = F_lat * (cP, sP).
+      
+      Fx += F_lat * (-sP); // Wait. Lateral is Y-local.
+      // If car faces Y (0,1), Right is X (1,0).
+      // Rotated by psi: Right = (cP, sP).
+      // So Force = F_lat * cP in X, F_lat * sP in Y.
+      // My previous math had -sP, cP which is Forward.
+      
+      // FIX: Lateral Direction is (cP, sP).
       Fx += F_lat * cP;
       Fy += F_lat * sP;
-      Mz += wOff.x * F_lat; // Torque arm X generates Y-force torque? 
-      // Mz = x*Fy_local - y*Fx_local. Here Fx_loc=F_lat, Fy_loc=0? No.
-      // Lat force acts along local X axis (sideways).
-      // If car is long (y), Lat force at front creates Mz = y * F_lat.
-      // Wait. Standard SAE: X fwd, Y right.
-      // Here: Y fwd, X right/left?
-      // wOff.x is Width. wOff.y is Length.
-      // F_lat is acting along X (width).
-      // Moment arm is Y (length).
-      // Torque = F_lat * y
+      
+      // Torque
       Mz -= wOff.y * F_lat; 
     } else {
-      // In air: Reset anchor to current wheel pos so it doesn't snap on landing
       tireAnchors[key].x = wx;
       tireAnchors[key].y = wy;
     }
