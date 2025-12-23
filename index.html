@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Spin & Crash (Fixed)</title>
+<title>Vehicle Dynamics - Spin & Crash (Complete)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -75,8 +75,13 @@
         
         <h3>Box 3 (Loose Cargo)</h3>
         <div class="grid2">
-          <label>Weight <span class="units">lb</span><input id="box3_Wt" type="number" value="100"></label>
-          <label>Friction <span class="units">µ</span><input id="box3_Fric" type="number" value="0.3"></label>
+          <label>Length (Y) <span class="units">in</span><input id="box3_L" type="number" value="20"></label>
+          <label>Width (X)  <span class="units">in</span><input id="box3_W" type="number" value="20"></label>
+          <label>Height (Z) <span class="units">in</span><input id="box3_H" type="number" value="20"></label>
+          <label>Weight     <span class="units">lb</span><input id="box3_Wt" type="number" value="100"></label>
+          <label>Initial X  <span class="units">in</span><input id="box3_X0" type="number" value="0"></label>
+          <label>Initial Y  <span class="units">in</span><input id="box3_Y0" type="number" value="-50"></label>
+          <label>Friction   <span class="units">µ</span><input id="box3_Fric" type="number" value="0.3"></label>
         </div>
 
         <h3>Suspension</h3>
@@ -85,6 +90,13 @@
           <label>Front C <span class="units">lb·s/in</span><input id="c_sf" type="number" value="25"></label>
           <label>Rear K <span class="units">lb/in</span><input id="k_sr" type="number" value="350"></label>
           <label>Rear C <span class="units">lb·s/in</span><input id="c_sr" type="number" value="30"></label>
+        </div>
+        
+        <h3>Wheels</h3>
+        <div class="grid2">
+          <label>Front Y  <span class="units">in</span><input id="wheel_Yf" type="number" value="-20"></label>
+          <label>Rear Spacing <span class="units">in</span><input id="wheel_dYr" type="number" value="80"></label>
+          <label>Weight <span class="units">lb</span><input id="wheel_Wt" type="number" value="120"></label>
         </div>
       </div>
       
@@ -111,7 +123,6 @@
 </div>
 
 <script type="module">
-// 3. Import using 'three' alias defined in the Import Map above
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
@@ -229,6 +240,7 @@ function updateChartLogic(t) {
 
 function getVal(id) { 
   const el = document.getElementById(id);
+  if(!el) { console.error("Missing ID:", id); return 0; }
   if(el.type === 'checkbox') return el.checked;
   return parseFloat(el.value) || 0; 
 }
@@ -492,14 +504,11 @@ function step(dt) {
 }
 
 function stepBox3(dt, vehAccel) {
-  // Simplified cargo physics for 6DOF (Gravity + Friction)
-  // Just stick it for now if inside bed, fall if outside
-  // Calculating full relative motion in spinning frame is complex.
-  // For this step, we keep the previous logic but update checks.
-  
-  // Just update position to match car for now to prevent visual glitches during spin
-  // Ideally this needs a full relative motion rewrite.
-  // We'll leave it "latched" to simple relative spring physics.
+  // Placeholder: keep box attached for now to verify car spin first
+  const cP = Math.cos(state.psi), sP = Math.sin(state.psi);
+  box3State.x = getVal('box3_X0');
+  box3State.y = getVal('box3_Y0');
+  // Visual update will happen in animate
 }
 
 function getRoadZ(x, y) {
