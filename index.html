@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Handling & Crash (Stable Controls)</title>
+<title>Vehicle Dynamics - Handling (Quiet Start)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -198,7 +198,7 @@ function init() {
   renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
 
-  // FIX: OrbitControls without fighting the camera
+  // MOUSE CONTROLS: Left=Rotate, Right=Pan
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
@@ -283,7 +283,7 @@ function buildVehicle() {
   vehicleGroup.clear();
   if(railMesh) { groundGroup.remove(railMesh); railMesh=null; }
 
-  // Guard Rail Mesh
+  // Guard Rail
   if(getVal('rail_active')) {
     const rx = getVal('rail_x');
     const ry = getVal('rail_y_start');
@@ -325,7 +325,7 @@ function buildVehicle() {
   b1.castShadow = true;
   vehicleGroup.add(b1);
 
-  // Box 2 (Cab) - RESTORED
+  // Box 2 (Cab)
   const b2 = new THREE.Mesh(new THREE.BoxGeometry(W2, L2, H2), new THREE.MeshStandardMaterial({color: 0x88aabb}));
   b2.position.set(c2.x - CG.x, c2.y - CG.y, c2.z - CG.z);
   b2.castShadow = true;
@@ -351,21 +351,17 @@ function buildVehicle() {
     vehicleGroup.add(mesh);
   });
 
-  // FIX: Stability - Equilibrium Start
-  // Calculate sag to sit perfectly on springs
+  // --- STABLE START ---
+  // Calculate equilibrium sag
   const totalWeight = (m1+m2)*g;
   const k_total = 2*getVal('k_sf') + 2*getVal('k_sr');
   const sag = totalWeight / k_total;
   
-  // Set car height so springs are pre-compressed by 'sag'
   state.x=0; state.y=0; 
-  state.z = CG.z - sag; 
-  
+  state.z = CG.z - sag; // Sit down gently
   state.phi=0; state.theta=0; state.psi=0;
   state.dx=0; state.dy=getVal('veh_v'); state.dz=0;
   state.dphi=0; state.dtheta=0; state.dpsi=0;
-  
-  // Set wheels to ground Z=16
   state.zw.FL = state.zw.FR = state.zw.RL = state.zw.RR = 16; 
 
   // Box 3 Init
@@ -375,9 +371,14 @@ function buildVehicle() {
   box3State.z = bedZ + H3/2 + 2;
   box3State.dx=0; box3State.dy=0; box3State.dz=0;
   
-  // Update Camera Target Initial
   controls.target.set(0, 0, 0);
   controls.update();
+  
+  if(chartInstance) {
+    chartInstance.data.labels = [];
+    chartInstance.data.datasets.forEach(ds=>ds.data=[]);
+    chartInstance.update();
+  }
 }
 
 // --- PHYSICS ---
@@ -385,6 +386,15 @@ function getDerivatives(t, s) {
   const x=s[0], y=s[1], z=s[2], phi=s[3], theta=s[4], psi=s[5];
   const dx=s[6], dy=s[7], dz=s[8], dphi=s[9], dtheta=s[10], dpsi=s[11];
   
+  // QUIET TIME (0.5s): Prevent Friction Shock
+  if (t < 0.5) {
+    // Lock Lateral & Yaw
+    return [dx, dy, dz, dphi, dtheta, 0,  
+            0, 0, s[8], s[9], s[10], 0, 
+            s[12], s[13], s[14], s[15], 0, 0, 0, 0]; 
+    // Note: returning rough derivatives just to keep it upright
+  }
+
   const g = getVal('veh_g');
   const wm = getVal('wheel_Wt')/g;
   const cP = Math.cos(psi), sP = Math.sin(psi);
@@ -410,7 +420,6 @@ function getDerivatives(t, s) {
     const k_s = wOff.name.startsWith('F') ? getVal('k_sf') : getVal('k_sr');
     const c_s = wOff.name.startsWith('F') ? getVal('c_sf') : getVal('c_sr');
     
-    // Spring Force with Equilibrium Offset (25in free length)
     const freeLen = 25;
     const F_susp = Math.max(0, k_s*(freeLen-(zb-zw)) + c_s*(dzw-dzb));
     
@@ -425,14 +434,13 @@ function getDerivatives(t, s) {
     ddzw[i] = (F_tire_z - F_susp - wm*g) / wm;
 
     // Lateral Friction
-    if(F_tire_z > 0) {
+    if(F_tire_z > 0 && t > 0.5) {
       const vx_w = dx - dpsi*(sP*wOff.x + cP*wOff.y);
       const vy_w = dy + dpsi*(cP*wOff.x - sP*wOff.y);
       
       const v_long = -vx_w*sP + vy_w*cP;
       const v_lat  =  vx_w*cP + vy_w*sP;
       
-      // Cutoff for low speed jitter
       if(Math.abs(v_long) > 20) {
         const alpha = Math.atan2(v_lat, Math.abs(v_long));
         let F_lat = -1500 * alpha; // Cornering stiffness
@@ -484,6 +492,8 @@ function step(dt) {
            state.dzw.FL,state.dzw.FR,state.dzw.RL,state.dzw.RR];
            
   let k1 = getDerivatives(simTime, s);
+  
+  // RK4
   let s2 = s.map((v,i) => v + k1[i]*dt/2);
   let k2 = getDerivatives(simTime+dt/2, s2);
   let s3 = s.map((v,i) => v + k2[i]*dt/2);
@@ -492,10 +502,17 @@ function step(dt) {
   let k4 = getDerivatives(simTime+dt, s4);
   let sf = s.map((v,i) => v + (dt/6)*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i]));
   
+  // If quiet time, enforce lock
+  if (simTime < 0.5) {
+    state.psi = 0; state.dpsi = 0; state.dx = 0;
+  } else {
+    state.psi=sf[5]; state.dpsi=sf[11]; state.dx=sf[6];
+  }
+  
   state.x=sf[0]; state.y=sf[1]; state.z=sf[2];
-  state.phi=sf[3]; state.theta=sf[4]; state.psi=sf[5];
-  state.dx=sf[6]; state.dy=sf[7]; state.dz=sf[8];
-  state.dphi=sf[9]; state.dtheta=sf[10]; state.dpsi=sf[11];
+  state.phi=sf[3]; state.theta=sf[4];
+  state.dy=sf[7]; state.dz=sf[8];
+  state.dphi=sf[9]; state.dtheta=sf[10];
   state.zw.FL=sf[12]; state.zw.FR=sf[13]; state.zw.RL=sf[14]; state.zw.RR=sf[15];
   state.dzw.FL=sf[16]; state.dzw.FR=sf[17]; state.dzw.RL=sf[18]; state.dzw.RR=sf[19];
   state.ddz = k1[8];
