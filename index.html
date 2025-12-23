@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Viscous Stability</title>
+<title>Vehicle Dynamics - Kinematic Stability</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -153,6 +153,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+// --- GLOBALS ---
 let scene, camera, renderer, controls;
 let vehicleGroup, groundGroup, looseBox3Mesh, railMesh;
 let roadFeatures = [];
@@ -168,7 +169,8 @@ let chartUpdateCounter = 0;
 const physicsSteps = 20; 
 const dt = 1/600; 
 
-// State
+// Physics State (18 DOF)
+// [x, y, z, phi, theta, psi, dx, dy, dz, dphi, dtheta, dpsi, ...zw, ...dzw]
 let state = {
   x:0, y:0, z:40, phi:0, theta:0, psi:0,
   dx:0, dy:0, dz:0, dphi:0, dtheta:0, dpsi:0,
@@ -284,7 +286,7 @@ function buildVehicle() {
   vehicleGroup.clear();
   if(railMesh) { groundGroup.remove(railMesh); railMesh=null; }
 
-  // 1. Guard Rail
+  // Guard Rail
   if(getVal('rail_active')) {
     const rx = getVal('rail_x');
     const ry = getVal('rail_y_start');
@@ -295,7 +297,7 @@ function buildVehicle() {
     groundGroup.add(railMesh);
   }
 
-  // 2. Geometry
+  // Geometry
   const L1 = getVal('box1_L'), W1 = getVal('box1_W'), H1 = getVal('box1_H');
   const L2 = getVal('box2_L'), W2 = getVal('box2_W'), H2 = getVal('box2_H');
   const L3 = getVal('box3_L'), W3 = getVal('box3_W'), H3 = getVal('box3_H');
@@ -305,7 +307,6 @@ function buildVehicle() {
   const m2 = getVal('box2_Wt')/g;
   const M = m1 + m2;
 
-  // 3. CG Calculation
   const c1 = { x:0, y:-L1/2, z: H1/2 + 16 };
   const c2 = { x:0, y:dY - L2/2, z: H1 + H2/2 + 16 };
   const CG = {
@@ -320,7 +321,7 @@ function buildVehicle() {
 
   massProps = { M, CG, Ixx, Iyy, Izz, W: W1, L: L1 };
 
-  // 4. Visuals
+  // Visuals
   const b1 = new THREE.Mesh(new THREE.BoxGeometry(W1, L1, H1), new THREE.MeshStandardMaterial({color: 0x5577aa}));
   b1.position.set(c1.x - CG.x, c1.y - CG.y, c1.z - CG.z);
   b1.castShadow = true;
@@ -349,11 +350,12 @@ function buildVehicle() {
     vehicleGroup.add(mesh);
   });
 
-  // 5. HARD RESET & EQUILIBRIUM
+  // HARD RESET STATE
   const totalWeight = (m1+m2)*g;
   const k_total = 2*getVal('k_sf') + 2*getVal('k_sr');
   const sag = totalWeight / k_total;
   
+  // FIX: Force velocity manually, do not rely on integrator for forward motion
   state = {
     x:0, y:0, z: CG.z - sag, 
     phi:0, theta:0, psi:0,
@@ -379,7 +381,7 @@ function buildVehicle() {
   document.getElementById('timeDisplay').innerText = `Time: 0.00s`;
 }
 
-// --- ROBUST PHYSICS (Viscous Tires) ---
+// --- PHYSICS (Kinematic Forward) ---
 function getDerivatives(t, s) {
   const x=s[0], y=s[1], z=s[2], phi=s[3], theta=s[4], psi=s[5];
   const dx=s[6], dy=s[7], dz=s[8], dphi=s[9], dtheta=s[10], dpsi=s[11];
@@ -393,23 +395,22 @@ function getDerivatives(t, s) {
   let Fx=0, Fy=0, Fz=0, Mx=0, My=0, Mz=0;
   const ddzw = [0,0,0,0];
 
-  // Drag & Damping
-  Fx -= 0.02 * dx; 
-  Fy -= 0.02 * dy;
+  // Stabilizers
   Mz -= 100000 * dpsi; 
 
   wheelOffsets.forEach((wOff, i) => {
+    // Wheel World Pos
     const wx = x + cP*wOff.x - sP*wOff.y;
     const wy = y + sP*wOff.x + cP*wOff.y;
     const zw = s[12+i];
     const dzw = s[16+i];
 
+    // Suspension
     const zb = z - phi*wOff.x + theta*wOff.y;
     const dzb = dz - dphi*wOff.x + dtheta*wOff.y;
     const k_s = wOff.name.startsWith('F') ? getVal('k_sf') : getVal('k_sr');
     const c_s = wOff.name.startsWith('F') ? getVal('c_sf') : getVal('c_sr');
     
-    // Equilibrium spring force
     const freeLen = 25;
     const F_susp = Math.max(0, k_s*(freeLen-(zb-zw)) + c_s*(dzw-dzb));
     
@@ -417,28 +418,24 @@ function getDerivatives(t, s) {
     Mx -= F_susp * wOff.x;
     My += F_susp * wOff.y;
 
+    // Tire Vertical
     const roadZ = getRoadZ(wx, wy);
     const pen = roadZ - (zw - 16);
     const F_tire_z = (pen>0) ? 1200*pen : 0;
     ddzw[i] = (F_tire_z - F_susp - wm*g) / wm;
 
     // --- VISCOUS LATERAL FRICTION (STABLE) ---
-    // Instead of Slip Angle, use Damping Force
-    if(F_tire_z > 0) {
+    if(F_tire_z > 0 && t > 0.1) {
       const vx_w = dx - dpsi*(sP*wOff.x + cP*wOff.y);
       const vy_w = dy + dpsi*(cP*wOff.x - sP*wOff.y);
       
-      const v_long = -vx_w*sP + vy_w*cP;
       const v_lat  =  vx_w*cP + vy_w*sP; // Lateral slip velocity
       
       const mu = getVal('tire_mu');
       const maxF = mu * F_tire_z;
       
-      // Force is directly proportional to lateral velocity (Viscous)
-      // Coefficient = 5.0 (Tuning param)
       let F_lat = -v_lat * 5.0 * (F_tire_z/1000); 
       
-      // Clamp
       if(F_lat > maxF) F_lat = maxF;
       if(F_lat < -maxF) F_lat = -maxF;
       
@@ -470,8 +467,18 @@ function getDerivatives(t, s) {
     });
   }
 
+  // KINEMATIC OVERRIDE FOR FORWARD MOTION
+  // We ignore Fy/mass for the forward component to guarantee movement
+  // ddy (Forward) is controlled by velocity maintenance, not F=ma
+  // Lateral accel comes from Fx/Fy.
+  
   const ddx = Fx / massProps.M;
-  const ddy = Fy / massProps.M;
+  // Dynamic Y accel? No, force velocity to target speed smoothly
+  // This prevents the "stuck" car problem.
+  // We apply force only to correct speed errors.
+  const targetV = getVal('veh_v');
+  const ddy = (targetV - dy) * 2.0; // Cruise control P-loop
+  
   const ddz = (Fz - massProps.M*g) / massProps.M;
   const ddphi = My / massProps.Ixx;
   const ddtheta = Mx / massProps.Iyy;
