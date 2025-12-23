@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Stable Handling</title>
+<title>Vehicle Dynamics - Viscous Stability</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -25,9 +25,8 @@
     display: flex;
     flex-direction: column;
   }
+  #timeDisplay { font-size: 12px; font-weight: bold; margin-bottom: 5px; text-align: right; }
   
-  #timeDisplay { font-size: 12px; font-weight: bold; color: #333; margin-bottom: 5px; text-align: right; }
-
   h3 { margin:15px 0 5px 0; font-size:12px; border-bottom:1px solid #aaa; padding-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; color: #444; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; }
   label { font-size:11px; display:block; color: #666; }
@@ -36,11 +35,9 @@
   
   button { width:100%; margin-top:5px; padding:8px; font-size:11px; cursor:pointer; background: #e0e0e0; border: 1px solid #bbb; border-radius: 3px; transition: background 0.2s; }
   button:hover { background: #d0d0d0; }
-  
   #solveBtn { background: #d4edda; border-color: #c3e6cb; color: #155724; font-weight: bold; }
   #stopBtn { background: #f8d7da; border-color: #f5c6cb; color: #721c24; font-weight: bold; }
   #addFeatureBtn { background: #d0e8ff; border-color: #b8daff; color: #004085; font-weight: bold; margin-top: 10px;}
-  
   #featureList div { background: #fff; padding: 4px; border: 1px solid #ddd; margin-top: 4px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
 </style>
 
@@ -156,7 +153,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// --- GLOBALS ---
 let scene, camera, renderer, controls;
 let vehicleGroup, groundGroup, looseBox3Mesh, railMesh;
 let roadFeatures = [];
@@ -168,12 +164,11 @@ let isRunning = false;
 let chartInstance = null;
 let chartUpdateCounter = 0;
 
-// VERY High freq physics to handle stiffness
+// High freq physics
 const physicsSteps = 20; 
-const dt = 1/1200; // 1200Hz physics loop
+const dt = 1/600; 
 
-// Physics State (18 DOF)
-// [x, y, z, phi, theta, psi, dx, dy, dz, dphi, dtheta, dpsi, ...zw, ...dzw]
+// State
 let state = {
   x:0, y:0, z:40, phi:0, theta:0, psi:0,
   dx:0, dy:0, dz:0, dphi:0, dtheta:0, dpsi:0,
@@ -284,13 +279,12 @@ document.getElementById('solveBtn').onclick = () => isRunning = true;
 document.getElementById('stopBtn').onclick = () => isRunning = false;
 document.getElementById('updateBtn').onclick = buildVehicle;
 
-// --- BUILDER & RESET ---
 function buildVehicle() {
   isRunning = false; simTime = 0;
   vehicleGroup.clear();
   if(railMesh) { groundGroup.remove(railMesh); railMesh=null; }
 
-  // Guard Rail
+  // 1. Guard Rail
   if(getVal('rail_active')) {
     const rx = getVal('rail_x');
     const ry = getVal('rail_y_start');
@@ -301,7 +295,7 @@ function buildVehicle() {
     groundGroup.add(railMesh);
   }
 
-  // Geometry
+  // 2. Geometry
   const L1 = getVal('box1_L'), W1 = getVal('box1_W'), H1 = getVal('box1_H');
   const L2 = getVal('box2_L'), W2 = getVal('box2_W'), H2 = getVal('box2_H');
   const L3 = getVal('box3_L'), W3 = getVal('box3_W'), H3 = getVal('box3_H');
@@ -311,6 +305,7 @@ function buildVehicle() {
   const m2 = getVal('box2_Wt')/g;
   const M = m1 + m2;
 
+  // 3. CG Calculation
   const c1 = { x:0, y:-L1/2, z: H1/2 + 16 };
   const c2 = { x:0, y:dY - L2/2, z: H1 + H2/2 + 16 };
   const CG = {
@@ -325,7 +320,7 @@ function buildVehicle() {
 
   massProps = { M, CG, Ixx, Iyy, Izz, W: W1, L: L1 };
 
-  // Visuals
+  // 4. Visuals
   const b1 = new THREE.Mesh(new THREE.BoxGeometry(W1, L1, H1), new THREE.MeshStandardMaterial({color: 0x5577aa}));
   b1.position.set(c1.x - CG.x, c1.y - CG.y, c1.z - CG.z);
   b1.castShadow = true;
@@ -354,7 +349,7 @@ function buildVehicle() {
     vehicleGroup.add(mesh);
   });
 
-  // HARD RESET STATE
+  // 5. HARD RESET & EQUILIBRIUM
   const totalWeight = (m1+m2)*g;
   const k_total = 2*getVal('k_sf') + 2*getVal('k_sr');
   const sag = totalWeight / k_total;
@@ -381,16 +376,14 @@ function buildVehicle() {
     chartInstance.update();
   }
   
-  // Clean Time Display
   document.getElementById('timeDisplay').innerText = `Time: 0.00s`;
 }
 
-// --- ROBUST PHYSICS ---
+// --- ROBUST PHYSICS (Viscous Tires) ---
 function getDerivatives(t, s) {
   const x=s[0], y=s[1], z=s[2], phi=s[3], theta=s[4], psi=s[5];
   const dx=s[6], dy=s[7], dz=s[8], dphi=s[9], dtheta=s[10], dpsi=s[11];
   
-  // Guard against explosion
   if(isNaN(z) || Math.abs(z) > 500) return null;
 
   const g = getVal('veh_g');
@@ -400,69 +393,58 @@ function getDerivatives(t, s) {
   let Fx=0, Fy=0, Fz=0, Mx=0, My=0, Mz=0;
   const ddzw = [0,0,0,0];
 
-  // Aerodynamic Drag & Rotational Damping (Stabilizers)
-  Fx -= 0.05 * dx; 
-  Fy -= 0.05 * dy;
+  // Drag & Damping
+  Fx -= 0.02 * dx; 
+  Fy -= 0.02 * dy;
   Mz -= 100000 * dpsi; 
 
   wheelOffsets.forEach((wOff, i) => {
-    // Wheel World Pos
     const wx = x + cP*wOff.x - sP*wOff.y;
     const wy = y + sP*wOff.x + cP*wOff.y;
     const zw = s[12+i];
     const dzw = s[16+i];
 
-    // Suspension (Linearized for stability)
     const zb = z - phi*wOff.x + theta*wOff.y;
     const dzb = dz - dphi*wOff.x + dtheta*wOff.y;
     const k_s = wOff.name.startsWith('F') ? getVal('k_sf') : getVal('k_sr');
     const c_s = wOff.name.startsWith('F') ? getVal('c_sf') : getVal('c_sr');
     
-    // Spring Force with Equilibrium (25in free length assumption)
-    const F_susp = Math.max(0, k_s*(25-(zb-zw)) + c_s*(dzw-dzb));
+    // Equilibrium spring force
+    const freeLen = 25;
+    const F_susp = Math.max(0, k_s*(freeLen-(zb-zw)) + c_s*(dzw-dzb));
     
     Fz += F_susp;
     Mx -= F_susp * wOff.x;
     My += F_susp * wOff.y;
 
-    // Tire Vertical
     const roadZ = getRoadZ(wx, wy);
     const pen = roadZ - (zw - 16);
     const F_tire_z = (pen>0) ? 1200*pen : 0;
     ddzw[i] = (F_tire_z - F_susp - wm*g) / wm;
 
-    // --- COMPROMISE: VISCOUS TIRE MODEL ---
-    // Instead of Slip Angle (which explodes), use Lateral Damping.
-    if(F_tire_z > 0 && t > 0.5) {
-      // Local Lateral Velocity
+    // --- VISCOUS LATERAL FRICTION (STABLE) ---
+    // Instead of Slip Angle, use Damping Force
+    if(F_tire_z > 0) {
       const vx_w = dx - dpsi*(sP*wOff.x + cP*wOff.y);
       const vy_w = dy + dpsi*(cP*wOff.x - sP*wOff.y);
       
-      const v_lat = vx_w*cP + vy_w*sP; // Project world vel to local side
+      const v_long = -vx_w*sP + vy_w*cP;
+      const v_lat  =  vx_w*cP + vy_w*sP; // Lateral slip velocity
       
-      // Force = -C * V_lat (Viscous damping)
-      // Clamped by Friction Circle: mu * Fz
       const mu = getVal('tire_mu');
-      const limit = mu * F_tire_z;
-      const dampingC = 5.0; // Tire "Grip Stiffness"
+      const maxF = mu * F_tire_z;
       
-      let F_lat = -v_lat * dampingC * F_tire_z * 0.001; // Proportional to load
+      // Force is directly proportional to lateral velocity (Viscous)
+      // Coefficient = 5.0 (Tuning param)
+      let F_lat = -v_lat * 5.0 * (F_tire_z/1000); 
       
       // Clamp
-      if(F_lat > limit) F_lat = limit;
-      if(F_lat < -limit) F_lat = -limit;
+      if(F_lat > maxF) F_lat = maxF;
+      if(F_lat < -maxF) F_lat = -maxF;
       
-      // Apply to World Frame
-      Fx += F_lat * cP; // Local Y projected to World X?
-      // Wait. Local X axis = Heading. Local Y axis = Lateral.
-      // Unit Vec Y_local = (-sP, cP) in world.
-      // So F_world = F_lat * (-sP, cP)
-      
+      // Transform back
       Fx += F_lat * (-sP);
       Fy += F_lat * cP;
-      
-      // Torque Mz = r x F
-      // r = (x, y). F_local = (0, F_lat). Mz = x*Fy - y*Fx = x*F_lat
       Mz += wOff.x * F_lat;
     }
   });
@@ -505,11 +487,8 @@ function step(dt) {
            state.dzw.FL,state.dzw.FR,state.dzw.RL,state.dzw.RR];
            
   let k1 = getDerivatives(simTime, s);
-  if(!k1) { // Crash detected
-    isRunning = false; alert("Vehicle Crashed (Instability). Resetting."); buildVehicle(); return;
-  }
+  if(!k1) { isRunning = false; alert("Crashed."); buildVehicle(); return; }
   
-  // RK4
   let s2 = s.map((v,i) => v + k1[i]*dt/2);
   let k2 = getDerivatives(simTime+dt/2, s2) || k1;
   let s3 = s.map((v,i) => v + k2[i]*dt/2);
@@ -518,16 +497,10 @@ function step(dt) {
   let k4 = getDerivatives(simTime+dt, s4) || k1;
   let sf = s.map((v,i) => v + (dt/6)*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i]));
   
-  if (simTime < 0.5) {
-    state.psi = 0; state.dpsi = 0; state.dx = 0; // Lock lateral
-  } else {
-    state.psi=sf[5]; state.dpsi=sf[11]; state.dx=sf[6];
-  }
-  
   state.x=sf[0]; state.y=sf[1]; state.z=sf[2];
-  state.phi=sf[3]; state.theta=sf[4];
-  state.dy=sf[7]; state.dz=sf[8];
-  state.dphi=sf[9]; state.dtheta=sf[10];
+  state.phi=sf[3]; state.theta=sf[4]; state.psi=sf[5];
+  state.dx=sf[6]; state.dy=sf[7]; state.dz=sf[8];
+  state.dphi=sf[9]; state.dtheta=sf[10]; state.dpsi=sf[11];
   state.zw.FL=sf[12]; state.zw.FR=sf[13]; state.zw.RL=sf[14]; state.zw.RR=sf[15];
   state.dzw.FL=sf[16]; state.dzw.FR=sf[17]; state.dzw.RL=sf[18]; state.dzw.RR=sf[19];
   state.ddz = k1[8];
@@ -613,15 +586,12 @@ function animate() {
   requestAnimationFrame(animate);
   if(isRunning && massProps) {
     const ts = getVal('time_scale');
-    // SUB-STEPPING for robustness
     for(let i=0; i<physicsSteps; i++) {
       if(isRunning) step(dt/physicsSteps * ts);
     }
     updateChartLogic(simTime);
-    
     controls.target.set(state.x, state.y, state.z);
   } 
-  
   controls.update(); 
   
   vehicleGroup.position.set(state.x, state.y, state.z);
