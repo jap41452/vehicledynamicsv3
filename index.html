@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Handling & Crash</title>
+<title>Vehicle Dynamics - Handling & Crash (Stable)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -12,19 +12,10 @@
   #container { display:flex; height:100vh; width: 100vw; flex-direction: column; }
   #top-section { display: flex; flex: 1; min-height: 0; }
   
-  /* Restored the preferred UI layout */
   #ui { width:340px; padding:10px; background:#f5f5f5; border-right:1px solid #ccc; overflow-y:auto; flex-shrink: 0; box-shadow: 2px 0 5px rgba(0,0,0,0.1); z-index: 10; height: 100%; box-sizing: border-box;}
   #viewer { flex-grow:1; position:relative; background: #ccc; }
   
-  #chart-container { 
-    height: 200px; 
-    background: #fff; 
-    border-top: 1px solid #999; 
-    padding: 10px; 
-    flex-shrink: 0;
-    z-index: 20;
-    display: flex;
-  }
+  #chart-container { height: 200px; background: #fff; border-top: 1px solid #999; padding: 10px; flex-shrink: 0; z-index: 20; display: flex; }
   
   h3 { margin:15px 0 5px 0; font-size:12px; border-bottom:1px solid #aaa; padding-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; color: #444; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; }
@@ -164,10 +155,9 @@ let wheelOffsets = null;
 let isRunning = false;
 let chartInstance = null;
 let chartUpdateCounter = 0;
-const dt = 1/240; // High frequency for stability
+const dt = 1/240; 
 
-// Physics State (Now 18 DOF for 3D Motion)
-// [x, y, z, phi, theta, psi, dx, dy, dz, dphi, dtheta, dpsi, ...zw, ...dzw]
+// Physics State (18 DOF)
 const state = {
   x:0, y:0, z:40, phi:0, theta:0, psi:0,
   dx:0, dy:0, dz:0, dphi:0, dtheta:0, dpsi:0,
@@ -176,7 +166,7 @@ const state = {
   ddz: 0 
 };
 
-// Box3 State (Local to Vehicle, simplified for ride)
+// Box3 State (Local to Vehicle)
 const box3State = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, az: 0 };
 
 init();
@@ -200,26 +190,24 @@ function init() {
   renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
 
-  // FIX: OrbitControls
+  // FIX 1: Enable Damping and Screen Space Panning for better feel
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
+  controls.screenSpacePanning = true; 
   controls.target.set(0, 0, 0);
   
-  // Lights
   scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.6));
   const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
   dirLight.position.set(100, -300, 500);
   dirLight.castShadow = true;
   scene.add(dirLight);
 
-  // Groups
   groundGroup = new THREE.Group();
   scene.add(groundGroup);
   vehicleGroup = new THREE.Group();
   scene.add(vehicleGroup);
 
-  // Floor
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(10000, 10000), new THREE.MeshStandardMaterial({ color: 0xbbbbbb, depthWrite: false }));
   floor.receiveShadow = true;
   groundGroup.add(floor);
@@ -234,7 +222,6 @@ function init() {
   });
 }
 
-// ... Chart and Helper functions ...
 function initChart() {
   const ctx = document.getElementById('accelChart').getContext('2d');
   chartInstance = new Chart(ctx, {
@@ -266,6 +253,7 @@ function updateChartLogic(t) {
 
 function getVal(id) { 
   const el = document.getElementById(id);
+  if(!el) return 0;
   if(el.type==='checkbox') return el.checked;
   return parseFloat(el.value) || 0; 
 }
@@ -291,7 +279,7 @@ function buildVehicle() {
   if(getVal('rail_active')) {
     const rx = getVal('rail_x');
     const ry = getVal('rail_y_start');
-    const rlen = 500; // Fixed length visual
+    const rlen = 500; 
     const geom = new THREE.BoxGeometry(4, rlen, 30);
     railMesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({color: 0xaa3333}));
     railMesh.position.set(rx + 2, ry + rlen/2, 15);
@@ -317,10 +305,9 @@ function buildVehicle() {
     z: (m1*c1.z + m2*c2.z)/M
   };
 
-  // Inertias (Yaw Inertia Added)
-  const Ixx = (m1/12)*(W1**2 + H1**2) + (m2/12)*(W2**2 + H2**2); // Approx
+  const Ixx = (m1/12)*(W1**2 + H1**2) + (m2/12)*(W2**2 + H2**2); 
   const Iyy = (m1/12)*(L1**2 + H1**2) + (m2/12)*(L2**2 + H2**2);
-  const Izz = (m1/12)*(L1**2 + W1**2) + (m2/12)*(L2**2 + W2**2) + m2*(c2.y-CG.y)**2; // Yaw
+  const Izz = (m1/12)*(L1**2 + W1**2) + (m2/12)*(L2**2 + W2**2) + m2*(c2.y-CG.y)**2; 
 
   massProps = { M, CG, Ixx, Iyy, Izz, W: W1, L: L1 };
 
@@ -356,12 +343,20 @@ function buildVehicle() {
     vehicleGroup.add(mesh);
   });
 
-  // State Init
-  state.x=0; state.y=0; state.z=CG.z+5;
+  // FIX 2: Better Initialization to prevent "Drop" Instability
+  // Calculate equilibrium sag
+  const totalW = (m1+m2)*g;
+  const k_total = getVal('k_sf')*2 + getVal('k_sr')*2;
+  const sag = totalW / k_total;
+  
+  state.x=0; state.y=0; 
+  state.z = CG.z - sag; // Sit down on springs
   state.phi=0; state.theta=0; state.psi=0;
   state.dx=0; state.dy=getVal('veh_v'); state.dz=0;
   state.dphi=0; state.dtheta=0; state.dpsi=0;
-  state.zw.FL = state.zw.FR = state.zw.RL = state.zw.RR = CG.z;
+  
+  // Init wheels on ground
+  state.zw.FL = state.zw.FR = state.zw.RL = state.zw.RR = 16; // Radius
 
   // Box 3 Init
   const bedZ = (c1.z - CG.z) + H1/2; 
@@ -371,28 +366,25 @@ function buildVehicle() {
   box3State.dx=0; box3State.dy=0; box3State.dz=0;
 }
 
-// --- PHYSICS (Handling) ---
+// --- PHYSICS ---
 function getDerivatives(t, s) {
-  // s = [x,y,z,phi,theta,psi, dx,dy,dz,dphi,dtheta,dpsi, zw..., dzw...]
   const x=s[0], y=s[1], z=s[2], phi=s[3], theta=s[4], psi=s[5];
   const dx=s[6], dy=s[7], dz=s[8], dphi=s[9], dtheta=s[10], dpsi=s[11];
   
   const g = getVal('veh_g');
   const wm = getVal('wheel_Wt')/g;
-  
   const cP = Math.cos(psi), sP = Math.sin(psi);
   
   let Fx=0, Fy=0, Fz=0, Mx=0, My=0, Mz=0;
   const ddzw = [0,0,0,0];
 
-  // Aerodynamic Drag & Rotational Damping (Stabilizer)
+  // Drag & Damping
   Fx -= 0.02 * dx; 
   Fy -= 0.02 * dy;
-  Mz -= 50000 * dpsi; // Yaw damping to prevent infinite spin
+  Mz -= 50000 * dpsi; // Yaw damping
 
-  // Tires
   wheelOffsets.forEach((wOff, i) => {
-    // Wheel Pos in World
+    // Wheel Pos
     const wx = x + cP*wOff.x - sP*wOff.y;
     const wy = y + sP*wOff.x + cP*wOff.y;
     const zw = s[12+i];
@@ -410,69 +402,48 @@ function getDerivatives(t, s) {
     My += F_susp * wOff.y;
 
     // Tire Vertical
-    const roadZ = 0; // Simple floor
+    const roadZ = getRoadZ(wx, wy);
     const pen = roadZ - (zw - 16);
     const F_tire_z = (pen>0) ? 1200*pen : 0;
     ddzw[i] = (F_tire_z - F_susp - wm*g) / wm;
 
-    // Lateral Friction (Only if moving)
-    // Velocity of wheel contact point
-    const vx_w = dx - dpsi*(sP*wOff.x + cP*wOff.y);
-    const vy_w = dy + dpsi*(cP*wOff.x - sP*wOff.y);
-    
-    // Project to Wheel Heading (Wheel heads along Psi)
-    // Long = V dot Heading, Lat = V dot Perp
-    // Heading Vector: ( -sP, cP ) -- Wait, standard is +Y forward.
-    // If Psi=0, car faces +Y. Heading = (0, 1).
-    // Heading vector rotated by Psi: (-sin(psi), cos(psi)) ? No.
-    // If X is lateral, Y is forward.
-    // Rot Matrix: [cP -sP; sP cP]. Unit Y (0,1) becomes (-sP, cP). Correct.
-    
-    const v_long = -vx_w*sP + vy_w*cP;
-    const v_lat  =  vx_w*cP + vy_w*sP;
-    
-    // Stability Check: Low speed cutoff
-    if(F_tire_z > 0 && Math.abs(v_long) > 10) {
-      const alpha = Math.atan2(v_lat, Math.abs(v_long));
-      const C_alpha = 1500;
-      let F_lat = -C_alpha * alpha;
+    // Lateral Friction
+    if(F_tire_z > 0) {
+      const vx_w = dx - dpsi*(sP*wOff.x + cP*wOff.y);
+      const vy_w = dy + dpsi*(cP*wOff.x - sP*wOff.y);
       
-      const maxF = getVal('tire_mu') * F_tire_z;
-      if(Math.abs(F_lat) > maxF) F_lat = Math.sign(F_lat) * maxF;
+      const v_long = -vx_w*sP + vy_w*cP;
+      const v_lat  =  vx_w*cP + vy_w*sP;
       
-      // Transform Lateral Force (Local X) back to World
-      // Local X is (cP, sP).
-      Fx += F_lat * cP;
-      Fy += F_lat * sP;
-      
-      // Moment arm is wOff.y (long) for F_lat (lateral)?
-      // Torque = r x F. r is (wOff.x, wOff.y). Force is (F_lat, 0) locally.
-      // Mz = x*Fy - y*Fx. Local: x*0 - y*F_lat.
-      Mz -= wOff.y * F_lat; 
-      // Also slight offset from x if steered, but assume straight.
+      if(Math.abs(v_long) > 10) {
+        const alpha = Math.atan2(v_lat, Math.abs(v_long));
+        let F_lat = -1500 * alpha; // Cornering stiffness
+        const maxF = getVal('tire_mu') * F_tire_z;
+        if(Math.abs(F_lat) > maxF) F_lat = Math.sign(F_lat) * maxF;
+        
+        Fx += F_lat * cP;
+        Fy += F_lat * sP;
+        Mz -= wOff.y * F_lat; 
+      }
     }
   });
 
-  // Guard Rail Collision
+  // Guard Rail
   if(getVal('rail_active')) {
     const rx = getVal('rail_x');
     const ry1 = getVal('rail_y_start');
     const ry2 = ry1 + 500;
     const k_wall = getVal('rail_k');
-    
     const hL = massProps.L/2, hW = massProps.W/2;
     const corners = [{x:hW, y:hL}, {x:hW, y:-hL}, {x:-hW, y:hL}, {x:-hW, y:-hL}];
     
     corners.forEach(c => {
-      // World Pos of Corner
       const cx = x + cP*c.x - sP*c.y;
       const cy = y + sP*c.x + cP*c.y;
-      
       if(cx > rx && cy > ry1 && cy < ry2) {
         const pen = cx - rx;
-        const F_wall = -k_wall * pen; // World X force
+        const F_wall = -k_wall * pen; 
         Fx += F_wall;
-        // Torque: (cy - y)*Fx - (cx - x)*Fy. Fy=0.
         Mz -= (cy - y) * F_wall;
       }
     });
@@ -512,65 +483,54 @@ function step(dt) {
   state.ddz = k1[8];
   
   simTime += dt;
-  
-  // Update Cargo Box
   stepBox3(dt, {ddz: k1[8], dpsi: state.dpsi}); 
 }
 
 function stepBox3(dt, vehAccel) {
-  // Simplified logic: If inside bed, lock to bed. If out, fall.
-  // Rigorous multibody dynamics for loose cargo inside spinning car is complex.
-  // We approximate: 
-  
-  // 1. Determine "Bed Zone" in World Coords
   const cP = Math.cos(state.psi), sP = Math.sin(state.psi);
-  
-  // Transform Box Pos to Vehicle Frame
-  const dx = box3State.x, dy = box3State.y; // Local
+  const dx = box3State.x, dy = box3State.y; 
   const W1 = getVal('box1_W'), L1 = getVal('box1_L');
-  
-  // Check bounds
-  // Box center relative to CG
-  // Bed bounds relative to CG: [-W/2, W/2] and [-L/2 - cgy, L/2 - cgy]
   const b1y = -L1/2 - massProps.CG.y;
+  
   const inX = Math.abs(dx) < W1/2;
   const inY = (dy > b1y - L1/2) && (dy < b1y + L1/2);
   
   if(inX && inY && !box3State.isOffBed) {
-    // Stick to bed (Simplified) - Just update Z physics
-    // Add centrifugal force? F = m * r * w^2
-    // Push box outward
     const r = Math.sqrt(dx*dx + dy*dy);
     const F_cent = (getVal('box3_Wt')/386.1) * r * (state.dpsi**2);
-    // Slide box?
     const mu = getVal('box3_Fric');
     const F_fric = mu * getVal('box3_Wt');
-    
     if(F_cent > F_fric) {
-      // Slide outward
-      const slideF = F_cent - F_fric;
-      const acc = slideF / (getVal('box3_Wt')/386.1);
-      const ang = Math.atan2(dy, dx); // Radial direction
-      box3State.x += Math.cos(ang) * acc * dt * dt * 50; // Hacky integration
+      const acc = (F_cent - F_fric) / (getVal('box3_Wt')/386.1);
+      const ang = Math.atan2(dy, dx);
+      box3State.x += Math.cos(ang) * acc * dt * dt * 50;
       box3State.y += Math.sin(ang) * acc * dt * dt * 50;
     }
   } else {
     box3State.isOffBed = true;
-    // Fall
     box3State.dz -= 386.1 * dt;
     box3State.z += box3State.dz * dt;
-    if(box3State.z < 10) box3State.z = 10; // Floor
+    if(box3State.z < 10) box3State.z = 10; 
   }
 }
 
-// --- ROAD FEATURES ---
-// Helper: Add visual mesh for bump
-function addFeatureMesh(geom, color, x, y) {
-  const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({color}));
-  mesh.position.set(x, y, 0);
-  mesh.receiveShadow = true;
-  groundGroup.add(mesh);
-  return mesh;
+function getRoadZ(x, y) {
+  let z = 0;
+  for(let f of roadFeatures) {
+    if(f.type === 'rough') {
+      if(y >= f.params.y-f.params.w/2 && y <= f.params.y+f.params.w/2) {
+        z = f.params.h * (0.5*Math.sin(0.1*y)*Math.sin(0.1*x) + 0.3*Math.sin(0.3*y+1.2) + 0.2*Math.sin(0.5*(x+y)));
+      }
+      continue;
+    }
+    const dy = y - f.params.y;
+    const r = f.params.w/2;
+    if(Math.abs(dy) < r) {
+      if(f.type==='half-bump' && ((f.params.side==='left' && x>0) || (f.params.side==='right' && x<0))) continue;
+      z = Math.max(z, f.params.h * Math.sqrt(1 - (dy*dy)/(r*r)));
+    }
+  }
+  return z;
 }
 
 document.getElementById('addFeatureBtn').onclick = () => {
@@ -582,9 +542,21 @@ document.getElementById('addFeatureBtn').onclick = () => {
     const r = w/2;
     const shape = new THREE.Shape().moveTo(-r,0).absarc(0,0,r,0,Math.PI,false).lineTo(r,0);
     geom = new THREE.ExtrudeGeometry(shape, {depth:200, bevelEnabled:false}).rotateX(Math.PI/2).rotateZ(Math.PI/2);
+  } else if(type.startsWith('half')) {
+    const r = w/2;
+    const shape = new THREE.Shape().moveTo(-r,0).absarc(0,0,r,0,Math.PI,false).lineTo(r,0);
+    geom = new THREE.ExtrudeGeometry(shape, {depth:36, bevelEnabled:false}).rotateX(Math.PI/2).rotateZ(Math.PI/2);
+  } else {
+    geom = new THREE.PlaneGeometry(200, w, 20, 20).rotateX(-Math.PI/2);
   }
-  // Simplified for demo
-  if(geom) addFeatureMesh(geom, 0x888888, 0, y);
+  
+  const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({color: 0x888888}));
+  const xOff = (type==='half_L') ? -50 : (type==='half_R' ? 50 : 0);
+  if(type==='rough') mesh.material.color.setHex(0x8B4513);
+  
+  mesh.position.set(xOff, y, 0);
+  groundGroup.add(mesh);
+  roadFeatures.push({id: nextFeatureId++, type, params:{h,w,y,side:type.includes('L')?'left':'right'}, mesh});
 };
 
 function animate() {
@@ -593,22 +565,21 @@ function animate() {
     const ts = getVal('time_scale');
     step(dt * ts);
     updateChartLogic(simTime);
-    controls.update(); // FIX: Needed for damping
+    
+    // FIX 2: Update Controls target to follow car so rotation still works
+    controls.target.set(state.x, state.y, state.z);
+    controls.update();
   } else {
     controls.update();
   }
   
-  // Sync Visuals
   vehicleGroup.position.set(state.x, state.y, state.z);
   vehicleGroup.rotation.set(state.theta, state.phi, state.psi); 
   
-  // Camera Follow (Loose)
-  const lag = 0.1;
-  camera.position.x += (state.x - 300 - camera.position.x) * lag;
-  camera.position.y += (state.y - 300 - camera.position.y) * lag;
-  camera.lookAt(state.x, state.y, state.z);
+  // Camera Follow
+  camera.position.x += (state.x - 300 - camera.position.x) * 0.1;
+  camera.position.y += (state.y - 300 - camera.position.y) * 0.1;
   
-  // Move Grid
   groundGroup.position.x = Math.floor(state.x/200)*200;
   groundGroup.position.y = Math.floor(state.y/200)*200;
 
@@ -621,7 +592,6 @@ function animate() {
   }
   
   looseBox3Mesh.position.set(box3State.x, box3State.y, box3State.z);
-  
   renderer.render(scene, camera);
 }
 </script>
