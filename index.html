@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Handling & Crash (Stable)</title>
+<title>Vehicle Dynamics - Handling & Crash (Stable Controls)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -15,7 +15,15 @@
   #ui { width:340px; padding:10px; background:#f5f5f5; border-right:1px solid #ccc; overflow-y:auto; flex-shrink: 0; box-shadow: 2px 0 5px rgba(0,0,0,0.1); z-index: 10; height: 100%; box-sizing: border-box;}
   #viewer { flex-grow:1; position:relative; background: #ccc; }
   
-  #chart-container { height: 200px; background: #fff; border-top: 1px solid #999; padding: 10px; flex-shrink: 0; z-index: 20; display: flex; }
+  #chart-container { 
+    height: 200px; 
+    background: #fff; 
+    border-top: 1px solid #999; 
+    padding: 10px; 
+    flex-shrink: 0;
+    z-index: 20;
+    display: flex;
+  }
   
   h3 { margin:15px 0 5px 0; font-size:12px; border-bottom:1px solid #aaa; padding-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; color: #444; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; }
@@ -190,7 +198,7 @@ function init() {
   renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
 
-  // FIX 1: Enable Damping and Screen Space Panning for better feel
+  // FIX: OrbitControls without fighting the camera
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
@@ -343,20 +351,22 @@ function buildVehicle() {
     vehicleGroup.add(mesh);
   });
 
-  // FIX 2: Better Initialization to prevent "Drop" Instability
-  // Calculate equilibrium sag
-  const totalW = (m1+m2)*g;
-  const k_total = getVal('k_sf')*2 + getVal('k_sr')*2;
-  const sag = totalW / k_total;
+  // FIX: Stability - Equilibrium Start
+  // Calculate sag to sit perfectly on springs
+  const totalWeight = (m1+m2)*g;
+  const k_total = 2*getVal('k_sf') + 2*getVal('k_sr');
+  const sag = totalWeight / k_total;
   
+  // Set car height so springs are pre-compressed by 'sag'
   state.x=0; state.y=0; 
-  state.z = CG.z - sag; // Sit down on springs
+  state.z = CG.z - sag; 
+  
   state.phi=0; state.theta=0; state.psi=0;
   state.dx=0; state.dy=getVal('veh_v'); state.dz=0;
   state.dphi=0; state.dtheta=0; state.dpsi=0;
   
-  // Init wheels on ground
-  state.zw.FL = state.zw.FR = state.zw.RL = state.zw.RR = 16; // Radius
+  // Set wheels to ground Z=16
+  state.zw.FL = state.zw.FR = state.zw.RL = state.zw.RR = 16; 
 
   // Box 3 Init
   const bedZ = (c1.z - CG.z) + H1/2; 
@@ -364,6 +374,10 @@ function buildVehicle() {
   box3State.y = getVal('box3_Y0');
   box3State.z = bedZ + H3/2 + 2;
   box3State.dx=0; box3State.dy=0; box3State.dz=0;
+  
+  // Update Camera Target Initial
+  controls.target.set(0, 0, 0);
+  controls.update();
 }
 
 // --- PHYSICS ---
@@ -379,9 +393,9 @@ function getDerivatives(t, s) {
   const ddzw = [0,0,0,0];
 
   // Drag & Damping
-  Fx -= 0.02 * dx; 
-  Fy -= 0.02 * dy;
-  Mz -= 50000 * dpsi; // Yaw damping
+  Fx -= 0.05 * dx; 
+  Fy -= 0.05 * dy;
+  Mz -= 100000 * dpsi; // Yaw damping
 
   wheelOffsets.forEach((wOff, i) => {
     // Wheel Pos
@@ -395,7 +409,10 @@ function getDerivatives(t, s) {
     const dzb = dz - dphi*wOff.x + dtheta*wOff.y;
     const k_s = wOff.name.startsWith('F') ? getVal('k_sf') : getVal('k_sr');
     const c_s = wOff.name.startsWith('F') ? getVal('c_sf') : getVal('c_sr');
-    const F_susp = Math.max(0, k_s*(25-(zb-zw)) + c_s*(dzw-dzb));
+    
+    // Spring Force with Equilibrium Offset (25in free length)
+    const freeLen = 25;
+    const F_susp = Math.max(0, k_s*(freeLen-(zb-zw)) + c_s*(dzw-dzb));
     
     Fz += F_susp;
     Mx -= F_susp * wOff.x;
@@ -415,7 +432,8 @@ function getDerivatives(t, s) {
       const v_long = -vx_w*sP + vy_w*cP;
       const v_lat  =  vx_w*cP + vy_w*sP;
       
-      if(Math.abs(v_long) > 10) {
+      // Cutoff for low speed jitter
+      if(Math.abs(v_long) > 20) {
         const alpha = Math.atan2(v_lat, Math.abs(v_long));
         let F_lat = -1500 * alpha; // Cornering stiffness
         const maxF = getVal('tire_mu') * F_tire_z;
@@ -566,19 +584,14 @@ function animate() {
     step(dt * ts);
     updateChartLogic(simTime);
     
-    // FIX 2: Update Controls target to follow car so rotation still works
+    // FIX 2: Only update target if running to allow mouse orbit
     controls.target.set(state.x, state.y, state.z);
-    controls.update();
-  } else {
-    controls.update();
-  }
+  } 
+  
+  controls.update(); // Always update controls
   
   vehicleGroup.position.set(state.x, state.y, state.z);
   vehicleGroup.rotation.set(state.theta, state.phi, state.psi); 
-  
-  // Camera Follow
-  camera.position.x += (state.x - 300 - camera.position.x) * 0.1;
-  camera.position.y += (state.y - 300 - camera.position.y) * 0.1;
   
   groundGroup.position.x = Math.floor(state.x/200)*200;
   groundGroup.position.y = Math.floor(state.y/200)*200;
