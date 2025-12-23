@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Handling (Quiet Start)</title>
+<title>Vehicle Dynamics - Robust Crash Physics</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -163,7 +163,10 @@ let wheelOffsets = null;
 let isRunning = false;
 let chartInstance = null;
 let chartUpdateCounter = 0;
-const dt = 1/240; 
+
+// High freq physics
+const physicsSteps = 10; 
+const dt = 1/600; // 600Hz physics for stability
 
 // Physics State (18 DOF)
 const state = {
@@ -198,7 +201,7 @@ function init() {
   renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
 
-  // MOUSE CONTROLS: Left=Rotate, Right=Pan
+  // FIX: OrbitControls without fighting the camera
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
@@ -249,7 +252,7 @@ function initChart() {
 }
 
 function updateChartLogic(t) {
-  chartUpdateCounter++; if(chartUpdateCounter < 10) return; chartUpdateCounter=0;
+  chartUpdateCounter++; if(chartUpdateCounter < 20) return; chartUpdateCounter=0;
   chartInstance.data.labels.push(t.toFixed(2));
   chartInstance.data.datasets[0].data.push(state.ddz / getVal('veh_g'));
   chartInstance.data.datasets[1].data.push(state.dpsi);
@@ -283,7 +286,7 @@ function buildVehicle() {
   vehicleGroup.clear();
   if(railMesh) { groundGroup.remove(railMesh); railMesh=null; }
 
-  // Guard Rail
+  // Guard Rail Mesh
   if(getVal('rail_active')) {
     const rx = getVal('rail_x');
     const ry = getVal('rail_y_start');
@@ -362,6 +365,8 @@ function buildVehicle() {
   state.phi=0; state.theta=0; state.psi=0;
   state.dx=0; state.dy=getVal('veh_v'); state.dz=0;
   state.dphi=0; state.dtheta=0; state.dpsi=0;
+  
+  // Set wheels to ground Z=16
   state.zw.FL = state.zw.FR = state.zw.RL = state.zw.RR = 16; 
 
   // Box 3 Init
@@ -371,6 +376,7 @@ function buildVehicle() {
   box3State.z = bedZ + H3/2 + 2;
   box3State.dx=0; box3State.dy=0; box3State.dz=0;
   
+  // Update Camera Target Initial
   controls.target.set(0, 0, 0);
   controls.update();
   
@@ -386,15 +392,6 @@ function getDerivatives(t, s) {
   const x=s[0], y=s[1], z=s[2], phi=s[3], theta=s[4], psi=s[5];
   const dx=s[6], dy=s[7], dz=s[8], dphi=s[9], dtheta=s[10], dpsi=s[11];
   
-  // QUIET TIME (0.5s): Prevent Friction Shock
-  if (t < 0.5) {
-    // Lock Lateral & Yaw
-    return [dx, dy, dz, dphi, dtheta, 0,  
-            0, 0, s[8], s[9], s[10], 0, 
-            s[12], s[13], s[14], s[15], 0, 0, 0, 0]; 
-    // Note: returning rough derivatives just to keep it upright
-  }
-
   const g = getVal('veh_g');
   const wm = getVal('wheel_Wt')/g;
   const cP = Math.cos(psi), sP = Math.sin(psi);
@@ -433,7 +430,7 @@ function getDerivatives(t, s) {
     const F_tire_z = (pen>0) ? 1200*pen : 0;
     ddzw[i] = (F_tire_z - F_susp - wm*g) / wm;
 
-    // Lateral Friction
+    // Lateral Friction (SMOOTH TANH MODEL)
     if(F_tire_z > 0 && t > 0.5) {
       const vx_w = dx - dpsi*(sP*wOff.x + cP*wOff.y);
       const vy_w = dy + dpsi*(cP*wOff.x - sP*wOff.y);
@@ -442,10 +439,14 @@ function getDerivatives(t, s) {
       const v_lat  =  vx_w*cP + vy_w*sP;
       
       if(Math.abs(v_long) > 20) {
+        // Tanh Smoothing: prevents rapid oscillation
         const alpha = Math.atan2(v_lat, Math.abs(v_long));
-        let F_lat = -1500 * alpha; // Cornering stiffness
-        const maxF = getVal('tire_mu') * F_tire_z;
-        if(Math.abs(F_lat) > maxF) F_lat = Math.sign(F_lat) * maxF;
+        const mu = getVal('tire_mu');
+        const maxF = mu * F_tire_z;
+        
+        // F = MaxF * tanh(Stiffness * alpha)
+        const stiffness = 8.0; // Normalized stiffness parameter
+        const F_lat = -maxF * Math.tanh(stiffness * alpha);
         
         Fx += F_lat * cP;
         Fy += F_lat * sP;
@@ -598,10 +599,12 @@ function animate() {
   requestAnimationFrame(animate);
   if(isRunning && massProps) {
     const ts = getVal('time_scale');
-    step(dt * ts);
+    // SUB-STEPPING for robustness
+    for(let i=0; i<physicsSteps; i++) {
+      step(dt/physicsSteps * ts);
+    }
     updateChartLogic(simTime);
     
-    // FIX 2: Only update target if running to allow mouse orbit
     controls.target.set(state.x, state.y, state.z);
   } 
   
