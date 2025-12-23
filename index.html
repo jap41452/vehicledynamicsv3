@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Lateral Spring Model (Stable Start)</title>
+<title>Vehicle Dynamics - Robust & Stable</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -178,8 +178,7 @@ let state = {
   ddz: 0 
 };
 
-// NEW: Lateral Spring Anchors (The fix)
-// Tracks the Y-position of the "ground grip point" for each tire
+// Tracks the world-coords of the "grip point" for each tire spring
 let tireAnchors = { FL:{x:0,y:0}, FR:{x:0,y:0}, RL:{x:0,y:0}, RR:{x:0,y:0} };
 
 let box3State = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, az: 0, isOffBed: false };
@@ -266,13 +265,20 @@ function updateChartLogic(t) {
   chartInstance.update();
 }
 
+// --- SAFE INPUT READER ---
 function getVal(id) { 
   const el = document.getElementById(id);
-  if(!el) return 0;
-  if(el.type==='checkbox') return el.checked;
+  if(!el) {
+    console.warn("Input ID missing: " + id);
+    return 0; // Return 0 instead of crashing
+  }
+  if(el.type === 'checkbox') return el.checked;
   return parseFloat(el.value) || 0; 
 }
-function setVal(id, val) { document.getElementById(id).value = val; }
+function setVal(id, val) { 
+  const el = document.getElementById(id);
+  if(el) el.value = val; 
+}
 
 function setupAutoUpdate() {
   document.querySelectorAll('.auto-update-group input').forEach(input => {
@@ -343,10 +349,7 @@ function buildVehicle() {
     vehicleGroup.add(mesh);
   });
 
-  // Init Lateral Spring Anchors
-  tireAnchors = { FL:{x:0,y:0}, FR:{x:0,y:0}, RL:{x:0,y:0}, RR:{x:0,y:0} };
-  
-  // STATIC EQUILIBRIUM CALCULATION (CRITICAL)
+  // Calculate Equilibrium Z
   const totalWeight = (m1+m2)*g;
   const k_total = 2*getVal('k_sf') + 2*getVal('k_sr');
   const sag = totalWeight / k_total;
@@ -361,11 +364,23 @@ function buildVehicle() {
     ddz: 0 
   };
 
+  // INITIALIZE TIRE ANCHORS PERFECTLY
+  tireAnchors = { FL:{x:0,y:0}, FR:{x:0,y:0}, RL:{x:0,y:0}, RR:{x:0,y:0} };
+  wheelOffsets.forEach((wOff, i) => {
+    const key = ['FL','FR','RL','RR'][i];
+    const wx = state.x + wOff.x; 
+    const wy = state.y + wOff.y;
+    tireAnchors[key] = { x: wx, y: wy };
+  });
+
   const bedZ = (c1.z - CG.z) + H1/2; 
   box3State = { x: getVal('box3_X0'), y: getVal('box3_Y0'), z: bedZ + H3/2 + 2, dx:0, dy:0, dz:0, az:0, isOffBed: false };
   
-  // WARM UP (SETTLE)
-  for(let i=0; i<200; i++) step(0.005); // Run 1 sec of heavy damping
+  // WARM UP - NO RECURSION ALLOWED
+  try {
+    for(let i=0; i<100; i++) step(0.002);
+  } catch(e) { console.warn("Warm up issue", e); }
+  
   simTime = 0; 
 
   controls.target.set(0, 0, 0);
@@ -377,7 +392,6 @@ function buildVehicle() {
   }
   document.getElementById('timeDisplay').innerText = `Time: 0.00s`;
   
-  // SYNC VISUALS TO SETTLED STATE
   vehicleGroup.position.set(state.x, state.y, state.z);
   vehicleGroup.rotation.set(state.theta, state.phi, state.psi); 
 }
@@ -387,7 +401,7 @@ function getDerivatives(t, s) {
   const x=s[0], y=s[1], z=s[2], phi=s[3], theta=s[4], psi=s[5];
   const dx=s[6], dy=s[7], dz=s[8], dphi=s[9], dtheta=s[10], dpsi=s[11];
   
-  if(isNaN(z) || Math.abs(z) > 500) return null;
+  if(isNaN(z) || Math.abs(z) > 1000) return null;
 
   const g = getVal('veh_g');
   const wm = getVal('wheel_Wt')/g;
@@ -396,7 +410,6 @@ function getDerivatives(t, s) {
   let Fx=0, Fy=0, Fz=0, Mx=0, My=0, Mz=0;
   const ddzw = [0,0,0,0];
 
-  // Drag & Damping
   Fx -= 0.05 * dx; 
   Fy -= 0.05 * dy;
   Mz -= 50000 * dpsi; 
@@ -428,7 +441,6 @@ function getDerivatives(t, s) {
       const stretchX = wx - anchor.x;
       const stretchY = wy - anchor.y;
       
-      // Project Stretch onto Lateral Axis (Right vector = cP, sP)
       const latStretch = stretchX*cP + stretchY*sP;
       
       let F_lat = -tireK * latStretch;
@@ -436,8 +448,6 @@ function getDerivatives(t, s) {
       
       if(Math.abs(F_lat) > limit) {
         F_lat = Math.sign(F_lat) * limit;
-        // Move anchor logic handled in step() or here approx?
-        // Better to update anchor in integration step, but we cheat here for simplicity
         const allowedStretch = limit / tireK;
         const correction = Math.abs(latStretch) - allowedStretch;
         const sign = Math.sign(latStretch);
@@ -445,23 +455,8 @@ function getDerivatives(t, s) {
         tireAnchors[key].y += sign * correction * sP;
       }
       
-      Fx += F_lat * (-sP); // Apply force PERPENDICULAR to heading? No.
-      // Lat force is along lateral axis (Right).
-      // Right Vector = (-sP, cP)? No.
-      // Forward Vector = (-sP, cP). Right Vector = (cP, sP).
-      // So F_world = F_lat * (cP, sP).
-      
-      Fx += F_lat * (-sP); // Wait. Lateral is Y-local.
-      // If car faces Y (0,1), Right is X (1,0).
-      // Rotated by psi: Right = (cP, sP).
-      // So Force = F_lat * cP in X, F_lat * sP in Y.
-      // My previous math had -sP, cP which is Forward.
-      
-      // FIX: Lateral Direction is (cP, sP).
       Fx += F_lat * cP;
       Fy += F_lat * sP;
-      
-      // Torque
       Mz -= wOff.y * F_lat; 
     } else {
       tireAnchors[key].x = wx;
@@ -487,7 +482,6 @@ function getDerivatives(t, s) {
     });
   }
 
-  // KINEMATIC FORWARD override
   const targetV = getVal('veh_v');
   const ddy = (targetV - dy) * 10.0; 
   
@@ -507,7 +501,11 @@ function step(dt) {
            state.dzw.FL,state.dzw.FR,state.dzw.RL,state.dzw.RR];
            
   let k1 = getDerivatives(simTime, s);
-  if(!k1) { isRunning = false; alert("Crashed."); buildVehicle(); return; }
+  if(!k1) { 
+    isRunning = false; 
+    console.error("Physics Crash"); 
+    return; 
+  }
   
   let s2 = s.map((v,i) => v + k1[i]*dt/2);
   let k2 = getDerivatives(simTime+dt/2, s2) || k1;
@@ -610,15 +608,19 @@ function animate() {
       if(isRunning) step(dt/physicsSteps * ts);
     }
     updateChartLogic(simTime);
-    controls.target.set(state.x, state.y, state.z);
+    // Safety: don't target NaN
+    if(!isNaN(state.x)) controls.target.set(state.x, state.y, state.z);
   } 
+  
   controls.update(); 
   
-  vehicleGroup.position.set(state.x, state.y, state.z);
-  vehicleGroup.rotation.set(state.theta, state.phi, state.psi); 
-  
-  groundGroup.position.x = Math.floor(state.x/200)*200;
-  groundGroup.position.y = Math.floor(state.y/200)*200;
+  // Visual Safety
+  if(!isNaN(state.x)) {
+    vehicleGroup.position.set(state.x, state.y, state.z);
+    vehicleGroup.rotation.set(state.theta, state.phi, state.psi); 
+    groundGroup.position.x = Math.floor(state.x/200)*200;
+    groundGroup.position.y = Math.floor(state.y/200)*200;
+  }
 
   if(wheelOffsets) {
     const names = ['FL','FR','RL','RR'];
