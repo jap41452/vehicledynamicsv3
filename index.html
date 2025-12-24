@@ -8,32 +8,32 @@
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
 
 <style>
-  body { margin:0; font-family:'Segoe UI', Tahoma, sans-serif; background:#1a1a1a; overflow: hidden; color: #e0e0e0; }
+  body { margin:0; font-family:'Segoe UI', Tahoma, sans-serif; background:#ffffff; overflow: hidden; color: #333333; }
   #container { display:flex; height:100vh; width: 100vw; flex-direction: column; }
   #top-section { display: flex; flex: 1; min-height: 0; }
-  #ui { width:360px; padding:12px; background:#2a2a2a; border-right:2px solid #404040; overflow-y:auto; flex-shrink: 0; box-shadow: 4px 0 8px rgba(0,0,0,0.4); z-index: 10; height: 100%; box-sizing: border-box;}
-  #viewer { flex-grow:1; position:relative; background: #1a1a1a; }
-  #chart-container { height: 220px; background: #2a2a2a; border-top: 2px solid #404040; padding: 12px; flex-shrink: 0; z-index: 20; display: flex; }
+  #ui { width:360px; padding:12px; background:#f5f5f5; border-right:2px solid #cccccc; overflow-y:auto; flex-shrink: 0; box-shadow: 4px 0 8px rgba(0,0,0,0.1); z-index: 10; height: 100%; box-sizing: border-box;}
+  #viewer { flex-grow:1; position:relative; background: #ffffff; }
+  #chart-container { height: 220px; background: #f5f5f5; border-top: 2px solid #cccccc; padding: 12px; flex-shrink: 0; z-index: 20; display: flex; }
   h3 { margin:18px 0 8px 0; font-size:13px; border-bottom:2px solid #4a9eff; padding-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; color: #4a9eff; font-weight: 600; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; }
-  label { font-size:11px; display:block; color: #b0b0b0; margin-bottom: 2px; }
-  input[type="number"], select { width:100%; padding:6px; font-size:11px; border:1px solid #404040; border-radius: 4px; box-sizing: border-box; background: #1a1a1a; color: #e0e0e0;}
+  label { font-size:11px; display:block; color: #555555; margin-bottom: 2px; }
+  input[type="number"], select { width:100%; padding:6px; font-size:11px; border:1px solid #cccccc; border-radius: 4px; box-sizing: border-box; background: #ffffff; color: #333333;}
   input[type="number"]:focus, select:focus { outline: none; border-color: #4a9eff; }
-  .units { float:right; font-size:9px; color:#707070; font-weight: bold; }
-  button { width:100%; margin-top:6px; padding:10px; font-size:12px; cursor:pointer; background: #3a3a3a; border: 1px solid #505050; border-radius: 4px; transition: all 0.2s; color: #e0e0e0; font-weight: 600; }
-  button:hover { background: #4a4a4a; transform: translateY(-1px); }
-  #solveBtn { background: #2d5f2d; border-color: #3d7f3d; color: #90ee90; }
-  #solveBtn:hover { background: #3d7f3d; }
-  #stopBtn { background: #5f2d2d; border-color: #7f3d3d; color: #ff9090; }
-  #stopBtn:hover { background: #7f3d3d; }
-  #addFeatureBtn { background: #2d4d5f; border-color: #3d6d7f; color: #90d0ee; margin-top: 10px;}
-  #addFeatureBtn:hover { background: #3d6d7f; }
-  #featureList div { background: #1a1a1a; padding: 6px; border: 1px solid #404040; margin-top: 6px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; border-radius: 3px; }
-  #featureList button { width: auto; margin: 0; padding: 3px 8px; font-size: 10px; height: auto; background: #3a3a3a; border:1px solid #505050; }
-  .dof-new { background: #2a3a2a; padding: 8px; border-radius: 4px; border: 1px solid #4a9eff; margin-top: 8px; }
-  .info-badge { display: inline-block; background: #4a9eff; color: #1a1a1a; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold; margin-left: 6px; }
-  .corner-badge { display: inline-block; background: #ff6b6b; color: #1a1a1a; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold; margin-left: 6px; }
-  .collision-badge { display: inline-block; background: #ffd93d; color: #1a1a1a; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold; margin-left: 6px; }
+  .units { float:right; font-size:9px; color:#888888; font-weight: bold; }
+  button { width:100%; margin-top:6px; padding:10px; font-size:12px; cursor:pointer; background: #e8e8e8; border: 1px solid #bbbbbb; border-radius: 4px; transition: all 0.2s; color: #333333; font-weight: 600; }
+  button:hover { background: #d8d8d8; transform: translateY(-1px); }
+  #solveBtn { background: #d4edda; border-color: #c3e6cb; color: #155724; }
+  #solveBtn:hover { background: #c3e6cb; }
+  #stopBtn { background: #f8d7da; border-color: #f5c6cb; color: #721c24; }
+  #stopBtn:hover { background: #f5c6cb; }
+  #addFeatureBtn { background: #d1ecf1; border-color: #bee5eb; color: #0c5460; margin-top: 10px;}
+  #addFeatureBtn:hover { background: #bee5eb; }
+  #featureList div { background: #ffffff; padding: 6px; border: 1px solid #dddddd; margin-top: 6px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; border-radius: 3px; }
+  #featureList button { width: auto; margin: 0; padding: 3px 8px; font-size: 10px; height: auto; background: #e8e8e8; border:1px solid #bbbbbb; }
+  .dof-new { background: #e8f4f8; padding: 8px; border-radius: 4px; border: 1px solid #4a9eff; margin-top: 8px; }
+  .info-badge { display: inline-block; background: #4a9eff; color: #ffffff; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold; margin-left: 6px; }
+  .corner-badge { display: inline-block; background: #ff6b6b; color: #ffffff; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold; margin-left: 6px; }
+  .collision-badge { display: inline-block; background: #ffd93d; color: #333333; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold; margin-left: 6px; }
 </style>
 
 <script type="importmap">
@@ -50,9 +50,9 @@
 <div id="container">
   <div id="top-section">
     <div id="ui">
-      <div style="background: #2d4d5f; padding: 10px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #4a9eff;">
-        <div style="font-size: 14px; font-weight: bold; color: #4a9eff;">6-DOF Vehicle Dynamics</div>
-        <div style="font-size: 10px; color: #90d0ee; margin-top: 4px;">Vertical (Z) + Pitch (θ) + Roll (φ) + Lateral (X) + Yaw (ψ) + Longitudinal (Y)</div>
+      <div style="background: #d1ecf1; padding: 10px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #4a9eff;">
+        <div style="font-size: 14px; font-weight: bold; color: #0c5460;">6-DOF Vehicle Dynamics</div>
+        <div style="font-size: 10px; color: #0c5460; margin-top: 4px;">Vertical (Z) + Pitch (θ) + Roll (φ) + Lateral (X) + Yaw (ψ) + Longitudinal (Y)</div>
       </div>
       
       <div class="auto-update-group">
@@ -96,7 +96,7 @@
           <label>Bumper K <span class="units">lb/in</span><input id="k_bumper" type="number" value="2000"></label>
           <label>Bumper C <span class="units">lb·s/in</span><input id="c_bumper" type="number" value="100"></label>
         </div>
-        <div style="font-size: 10px; color: #ffd93d; margin-top: 6px; line-height: 1.4;">
+        <div style="font-size: 10px; color: #0c5460; margin-top: 6px; line-height: 1.4;">
           Bumper stiffness/damping applied when vehicle corners contact guard rails. Higher values = harder impacts, better RK4 stability.
         </div>
       </div>
@@ -165,7 +165,7 @@
         <label>Length <span class="units">in</span><input id="feat_W" type="number" value="200"></label>
         <label>Location Y <span class="units">in</span><input id="feat_Y" type="number" value="100"></label>
       </div>
-      <div style="font-size: 10px; color: #90d0ee; margin-top: 6px; line-height: 1.4;">
+      <div style="font-size: 10px; color: #0c5460; margin-top: 6px; line-height: 1.4;">
         Guard rails create lateral barriers. Vehicle corners will impact the rail based on bumper stiffness/damping.
       </div>
       <button id="addFeatureBtn">+ Add Feature</button>
@@ -232,8 +232,8 @@ animate();
 function init() {
   const container = document.getElementById('viewer');
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0a0a);
-  scene.fog = new THREE.Fog(0x0a0a0a, 500, 4000);
+  scene.background = new THREE.Color(0xffffff);
+  scene.fog = new THREE.Fog(0xffffff, 500, 4000);
   THREE.Object3D.DEFAULT_UP.set(0,0,1);
   camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 10000);
   camera.position.set(400, -800, 500);
@@ -244,8 +244,8 @@ function init() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x222222, 0.5));
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 0.8));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
   dirLight.position.set(100, -300, 500);
   dirLight.castShadow = true;
   dirLight.shadow.mapSize.width = 2048; 
@@ -261,12 +261,12 @@ function init() {
   
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(10000, 10000), 
-    new THREE.MeshStandardMaterial({ color: 0x1a1a1a, depthWrite: false })
+    new THREE.MeshStandardMaterial({ color: 0xe8e8e8, depthWrite: false })
   );
   floor.receiveShadow = true;
   groundGroup.add(floor);
   
-  const grid = new THREE.GridHelper(10000, 100, 0x333333, 0x222222);
+  const grid = new THREE.GridHelper(10000, 100, 0x999999, 0xcccccc);
   grid.rotation.x = Math.PI/2;
   groundGroup.add(grid);
   
@@ -301,12 +301,12 @@ function initChart() {
       maintainAspectRatio: false,
       animation: false,
       plugins: {
-        title: { display: true, text: 'Vertical Acceleration (G)', color: '#e0e0e0' },
-        legend: { position: 'right', labels: { boxWidth: 10, color: '#e0e0e0' } }
+        title: { display: true, text: 'Vertical Acceleration (G)', color: '#333333' },
+        legend: { position: 'right', labels: { boxWidth: 10, color: '#333333' } }
       },
       scales: {
         x: { display: false },
-        y: { title: { display: true, text: 'G-Force', color: '#e0e0e0' }, suggestedMin: -2, suggestedMax: 2, ticks: { color: '#b0b0b0' }, grid: { color: '#404040' } }
+        y: { title: { display: true, text: 'G-Force', color: '#333333' }, suggestedMin: -2, suggestedMax: 2, ticks: { color: '#555555' }, grid: { color: '#dddddd' } }
       }
     }
   });
