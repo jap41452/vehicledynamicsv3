@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Vehicle Dynamics - Stable Baseline</title>
+<title>Vehicle Dynamics - 6DOF Lateral Spring</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"></script>
@@ -12,7 +12,6 @@
   #container { display:flex; height:100vh; width: 100vw; flex-direction: column; }
   #top-section { display: flex; flex: 1; min-height: 0; }
   
-  /* The layout you liked */
   #ui { width:340px; padding:10px; background:#f5f5f5; border-right:1px solid #ccc; overflow-y:auto; flex-shrink: 0; box-shadow: 2px 0 5px rgba(0,0,0,0.1); z-index: 10; height: 100%; box-sizing: border-box;}
   #viewer { flex-grow:1; position:relative; background: #ccc; }
   #chart-container { height: 200px; background: #fff; border-top: 1px solid #999; padding: 10px; flex-shrink: 0; z-index: 20; display: flex; }
@@ -139,7 +138,6 @@
 </div>
 
 <script type="module">
-// 3. Use 'three' directly via Import Map
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
@@ -154,16 +152,19 @@ let isRunning = false;
 let chartInstance = null;
 const maxDataPoints = 200; 
 let chartUpdateCounter = 0;
-const dt = 1/120; // 120Hz fixed step
+const dt = 1/240; // Higher freq for 6-DOF stability
 
-// 3-DOF State (Stable)
+// 6-DOF State (X, Y, Z, Phi, Theta, Psi)
 const state = {
-  z: 40, phi: 0, theta: 0,
-  dz: 0, dphi: 0, dtheta: 0,
+  x:0, y:0, z:40, phi:0, theta:0, psi:0,
+  dx:0, dy:0, dz:0, dphi:0, dtheta:0, dpsi:0,
   zw: { FL:30, FR:30, RL:30, RR:30 },
   dzw: { FL:0, FR:0, RL:0, RR:0 },
   ddz: 0 
 };
+
+// Tire Lateral Springs (Anchors)
+let tireAnchors = { FL:{x:0,y:0}, FR:{x:0,y:0}, RL:{x:0,y:0}, RR:{x:0,y:0} };
 
 const box3State = {
   x: 0, y: 0, z: 0,
@@ -194,6 +195,8 @@ function init() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
+  controls.screenSpacePanning = true; 
+  controls.target.set(0, 0, 0); // Allow camera to follow car
   
   scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.6));
   const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -235,12 +238,7 @@ function initChart() {
       labels: [],
       datasets: [
         { label: 'CG', borderColor: 'black', ...commonOptions, borderWidth: 3 },
-        { label: 'FL', borderColor: 'red', ...commonOptions },
-        { label: 'FR', borderColor: 'blue', ...commonOptions },
-        { label: 'RL', borderColor: 'orange', ...commonOptions },
-        { label: 'RR', borderColor: 'green', ...commonOptions },
-        { label: 'User', borderColor: 'purple', ...commonOptions, borderDash: [5, 5], borderWidth: 2 },
-        { label: 'Box3 (Abs)', borderColor: 'magenta', ...commonOptions, borderDash: [3, 3], borderWidth: 2 }
+        { label: 'User', borderColor: 'purple', ...commonOptions, borderDash: [5, 5], borderWidth: 2 }
       ]
     },
     options: {
@@ -251,10 +249,9 @@ function initChart() {
   });
 }
 
-// SAFE GET VAL
 function getVal(id) { 
   const el = document.getElementById(id);
-  if(!el) return 0;
+  if(!el) return 0; // Safe check
   if(el.type === 'checkbox') return el.checked;
   return parseFloat(el.value) || 0; 
 }
@@ -308,7 +305,9 @@ function buildVehicle(isAutoUpdate = false) {
               (m2/12)*(L2*L2 + H2*H2) + m2*((c2.y-CG.y)**2 + (c2.z-CG.z)**2);
   const Iyy = (m1/12)*(W1*W1 + H1*H1) + m1*((c1.x-CG.x)**2 + (c1.z-CG.z)**2) + 
               (m2/12)*(W2*W2 + H2*H2) + m2*((c2.x-CG.x)**2 + (c2.z-CG.z)**2);
-  massProps = { M, CG, Ixx, Iyy };
+  const Izz = (m1/12)*(L1*L1 + W1*W1) + (m2/12)*(L2*L2 + W2*W2) + m2*((c2.y-CG.y)**2); 
+  
+  massProps = { M, CG, Ixx, Iyy, Izz };
   
   const b1 = new THREE.Mesh(new THREE.BoxGeometry(W1, L1, H1), new THREE.MeshStandardMaterial({color: 0x5577aa}));
   b1.position.set(c1.x - CG.x, c1.y - CG.y, c1.z - CG.z);
@@ -341,18 +340,31 @@ function buildVehicle(isAutoUpdate = false) {
   });
   
   if(!isAutoUpdate || simTime === 0) {
-    state.z = CG.z + 5; 
-    state.phi = 0; state.theta = 0;
-    state.dz = 0; state.dphi = 0; state.dtheta = 0;
+    // 6-DOF Reset
+    state.x = 0; state.y = 0; state.z = CG.z + 5; 
+    state.phi = 0; state.theta = 0; state.psi = 0;
+    state.dx = 0; state.dy = getVal('veh_v'); state.dz = 0;
+    state.dphi = 0; state.dtheta = 0; state.dpsi = 0;
     state.zw.FL = state.zw.FR = state.zw.RL = state.zw.RR = CG.z;
     
-    // Init Box 3 slightly above bed
+    // Init Tire Anchors to Wheel positions at t=0
+    tireAnchors = { FL:{x:0,y:0}, FR:{x:0,y:0}, RL:{x:0,y:0}, RR:{x:0,y:0} };
+    wheelOffsets.forEach((w, i) => {
+        const key = ['FL','FR','RL','RR'][i];
+        // Wheel world position at t=0
+        tireAnchors[key].x = w.x; // x is 0
+        tireAnchors[key].y = w.y; // y is 0
+    });
+
     const bedHeight = (c1.z - CG.z) + H1/2;
     box3State.x = getVal('box3_X0');
     box3State.y = getVal('box3_Y0');
     box3State.z = bedHeight + H3/2 + 2; 
     box3State.dx = 0; box3State.dy = 0; box3State.dz = 0;
     box3State.isOffBed = false;
+    
+    controls.target.set(0,0,0);
+    controls.update();
   }
 }
 
@@ -438,67 +450,145 @@ function getRoadZ(x, y) {
   return z;
 }
 
-// --- BOX 3 PHYSICS (Attached or Falling) ---
 function stepBox3(dt, vehAccel) {
   const g = getVal('veh_g');
   if(!massProps) return;
   
   if(!box3State.isOffBed) {
-    // Check if thrown out? For now just keep it simple ride
     box3State.x = getVal('box3_X0');
     box3State.y = getVal('box3_Y0');
-    const b1cy = (-getVal('box1_L')/2) - massProps.CG.y;
     const bedZ = (getVal('box1_H')/2 + getVal('wheel_D')/2) - massProps.CG.z + getVal('box1_H')/2;
     box3State.z = bedZ + getVal('box3_H')/2;
     box3State.az = vehAccel.ddz;
   }
 }
 
+// --- 6-DOF PHYSICS WITH HARDENING LATERAL SPRING ---
 function getDerivatives(t, s_arr) {
-  if(!massProps || !wheelOffsets) return Array(14).fill(0);
-  const z=s_arr[0], phi=s_arr[1], theta=s_arr[2];
-  const dz=s_arr[3], dphi=s_arr[4], dtheta=s_arr[5];
+  if(!massProps || !wheelOffsets) return Array(20).fill(0);
+  
+  const x=s_arr[0], y=s_arr[1], z=s_arr[2], phi=s_arr[3], theta=s_arr[4], psi=s_arr[5];
+  const dx=s_arr[6], dy=s_arr[7], dz=s_arr[8], dphi=s_arr[9], dtheta=s_arr[10], dpsi=s_arr[11];
+  
   const v = getVal('veh_v');
   const g = getVal('veh_g');
   const wm = getVal('wheel_Wt') / g;
-  let FzBody=0, Tx=0, Ty=0;
+  const tireK = 500; // Lateral Spring Stiffness
+  const tireMu = 0.1; // Hard-coded friction coeff for test
+  
+  const cP = Math.cos(psi), sP = Math.sin(psi);
+  
+  let Fx_tot=0, Fy_tot=0, Fz_tot=0, Mx_tot=0, My_tot=0, Mz_tot=0;
   const ddzw = [0,0,0,0];
   const names = ['FL','FR','RL','RR'];
   const R = getVal('wheel_D')/2;
   
+  // Aerodynamic Drag (Damping)
+  Fx_tot -= 0.05 * dx;
+  Fy_tot -= 0.05 * dy; 
+  Mz_tot -= 1000 * dpsi; // Yaw damping
+
   names.forEach((n, i) => {
     const wOff = wheelOffsets[i];
-    const zw = s_arr[6+i];
+    
+    // Wheel Position World
+    const wx = x + cP*wOff.x - sP*wOff.y;
+    const wy = y + sP*wOff.x + cP*wOff.y;
+    
+    // Vertical Dynamics
+    const zw = s_arr[12+i];
     const zb = z - phi*wOff.x + theta*wOff.y;
     const dzb = dz - dphi*wOff.x + dtheta*wOff.y;
     const k_s = n.startsWith('F') ? getVal('k_sf') : getVal('k_sr');
     const c_s = n.startsWith('F') ? getVal('c_sf') : getVal('c_sr');
     const freeLen = 25; 
     const comp = freeLen - (zb - zw);
-    const dcomp = -(dzb - s_arr[10+i]);
+    const dcomp = -(dzb - s_arr[16+i]);
     const F_susp = Math.max(0, k_s * comp + c_s * dcomp);
-    FzBody += F_susp;
-    Tx += F_susp * wOff.y;
-    Ty -= F_susp * wOff.x;
     
-    const roadY = wOff.y + (v * t);
-    const absX = wOff.x + massProps.CG.x;
-    const roadZ = getRoadZ(absX, roadY);
+    Fz_tot += F_susp;
+    Mx_tot -= F_susp * wOff.x; // Roll moment
+    My_tot += F_susp * wOff.y; // Pitch moment
+    
+    const roadZ = getRoadZ(wx, wy);
     const pen = roadZ - (zw - R);
     const k_t = n.startsWith('F') ? getVal('k_tf') : getVal('k_tr');
-    const F_tire = (pen > 0) ? k_t * pen : 0;
-    ddzw[i] = (F_tire - F_susp - wm*g) / wm;
+    const F_tire_z = (pen > 0) ? k_t * pen : 0;
+    ddzw[i] = (F_tire_z - F_susp - wm*g) / wm;
+    
+    // --- LATERAL HARDENING SPRING LOGIC ---
+    if(F_tire_z > 0) {
+        // Current anchor point
+        const anchor = tireAnchors[n]; // {x, y} world
+        
+        // Stretch Vector (Anchor -> Wheel)
+        const dx_s = wx - anchor.x;
+        const dy_s = wy - anchor.y;
+        
+        // Project onto Lateral Axis (Right Vector = cP, sP)
+        const latStretch = dx_s*cP + dy_s*sP;
+        
+        // Spring Force
+        let F_lat = -tireK * latStretch;
+        
+        // Friction Limit (Hardening/Yielding)
+        const limit = tireMu * F_tire_z;
+        
+        if (Math.abs(F_lat) > limit) {
+            // Slide Anchor
+            F_lat = Math.sign(F_lat) * limit;
+            const allowedStretch = limit / tireK;
+            const correction = Math.abs(latStretch) - allowedStretch;
+            const sign = Math.sign(latStretch);
+            // Move anchor world pos along lateral vector
+            tireAnchors[n].x += sign * correction * cP;
+            tireAnchors[n].y += sign * correction * sP;
+        }
+        
+        // Apply Lateral Force to Chassis (World Frame)
+        // Lateral Vector is (cP, sP)
+        const Fx_lat = F_lat * cP;
+        const Fy_lat = F_lat * sP;
+        
+        Fx_tot += Fx_lat;
+        Fy_tot += Fy_lat;
+        
+        // Yaw Moment from Lateral Force
+        // Torque = r x F.  r=(wOff.x, wOff.y). F_local=(F_lat, 0)? No, lateral is along X axis?
+        // Standard vehicle coords: X forward, Y left. 
+        // Here: X lateral (width), Y longitudinal (length).
+        // F_lat is along X (width). Moment arm is Y (length).
+        // Mz = -wOff.y * F_lat;
+        Mz_tot -= wOff.y * F_lat;
+    } else {
+        // In air: reset anchor to wheel pos
+        tireAnchors[n].x = wx;
+        tireAnchors[n].y = wy;
+    }
   });
   
-  const ddz = (FzBody - massProps.M*g) / massProps.M;
-  const ddphi = Ty / massProps.Iyy;
-  const ddtheta = Tx / massProps.Ixx;
+  // Forward Kinematics (Cruise Control) - Override Dy Dynamics
+  const targetV = getVal('veh_v');
+  // Simple P-controller to maintain speed
+  const ddy = (targetV - dy) * 5.0; 
   
-  return [ dz, dphi, dtheta, ddz, ddphi, ddtheta, s_arr[10], s_arr[11], s_arr[12], s_arr[13], ddzw[0], ddzw[1], ddzw[2], ddzw[3] ];
+  const ddx = Fx_tot / massProps.M;
+  const ddz = (Fz_tot - massProps.M*g) / massProps.M;
+  const ddphi = My_tot / massProps.Ixx; // Note: Euler terms simplified
+  const ddtheta = Mx_tot / massProps.Iyy;
+  const ddpsi = Mz_tot / massProps.Izz;
+  
+  return [ dx, dy, dz, dphi, dtheta, dpsi, ddx, ddy, ddz, ddphi, ddtheta, ddpsi, 
+           s_arr[16], s_arr[17], s_arr[18], s_arr[19], ddzw[0], ddzw[1], ddzw[2], ddzw[3] ];
 }
 
 function packState(s) {
-  return [s.z, s.phi, s.theta, s.dz, s.dphi, s.dtheta, s.zw.FL, s.zw.FR, s.zw.RL, s.zw.RR, s.dzw.FL, s.dzw.FR, s.dzw.RL, s.dzw.RR];
+  return [
+    s.x, s.y, s.z, s.phi, s.theta, s.psi,
+    s.dx, s.dy, s.dz, s.dphi, s.dtheta, s.dpsi,
+    s.zw.FL, s.zw.FR, s.zw.RL, s.zw.RR,
+    s.dzw.FL, s.dzw.FR, s.dzw.RL, s.dzw.RR
+  ];
 }
 
 function stepRK4(dt) {
@@ -513,16 +603,17 @@ function stepRK4(dt) {
   const k4 = getDerivatives(t+dt, s4);
   const fin = s.map((v,i) => v + (dt/6)*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i]));
   
-  state.z=fin[0]; state.phi=fin[1]; state.theta=fin[2];
-  state.dz=fin[3]; state.dphi=fin[4]; state.dtheta=fin[5];
-  state.zw.FL=fin[6]; state.zw.FR=fin[7]; state.zw.RL=fin[8]; state.zw.RR=fin[9];
-  state.dzw.FL=fin[10]; state.dzw.FR=fin[11]; state.dzw.RL=fin[12]; state.dzw.RR=fin[13];
+  state.x=fin[0]; state.y=fin[1]; state.z=fin[2];
+  state.phi=fin[3]; state.theta=fin[4]; state.psi=fin[5];
+  state.dx=fin[6]; state.dy=fin[7]; state.dz=fin[8];
+  state.dphi=fin[9]; state.dtheta=fin[10]; state.dpsi=fin[11];
   
-  const vehAccel = { ddz: k1[3], ddphi: k1[4], ddtheta: k1[5] };
+  state.zw.FL=fin[12]; state.zw.FR=fin[13]; state.zw.RL=fin[14]; state.zw.RR=fin[15];
+  state.dzw.FL=fin[16]; state.dzw.FR=fin[17]; state.dzw.RL=fin[18]; state.dzw.RR=fin[19];
+  
+  const vehAccel = { ddz: k1[8], ddphi: k1[9], ddtheta: k1[10] };
   stepBox3(dt, vehAccel);
   state.ddz = vehAccel.ddz; 
-  state.ddphi = vehAccel.ddphi;
-  state.ddtheta = vehAccel.ddtheta;
   
   simTime += dt;
 }
@@ -556,14 +647,19 @@ function animate() {
     const timeScale = getVal('time_scale');
     stepRK4(dt * timeScale);
     updateChart();
+    
+    // Follow camera
+    if(!isNaN(state.x)) controls.target.set(state.x, state.y, state.z);
   }
   
-  controls.update(); // Smooth controls
+  controls.update(); 
   
-  vehicleGroup.position.set(0, 0, state.z);
-  vehicleGroup.rotation.set(state.theta, state.phi, 0);
-  const dist = getVal('veh_v') * simTime;
-  groundGroup.position.y = -dist;
+  if(!isNaN(state.x)) {
+    vehicleGroup.position.set(state.x, state.y, state.z);
+    vehicleGroup.rotation.set(state.theta, state.phi, state.psi);
+    groundGroup.position.x = Math.floor(state.x/100)*100;
+    groundGroup.position.y = Math.floor(state.y/100)*100;
+  }
   
   if(wheelOffsets) {
     const names = ['FL','FR','RL','RR'];
